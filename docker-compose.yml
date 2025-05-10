@@ -1,0 +1,31 @@
+# docker-compose.yml
+# Versão atualizada sem o campo 'version' obsoleto
+
+services:
+  wishlist-service:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/wishlist
+    depends_on:
+      - mongodb
+    networks:
+      - wishlist-network
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - wishlist-network
+
+networks:
+  wishlist-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:

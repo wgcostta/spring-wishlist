@@ -1,0 +1,264 @@
+---
+# Namespace para o serviço Wishlist
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wishlist-service
+  labels:
+    name: wishlist-service
+    environment: production
+
+---
+# ConfigMap para configuração do aplicativo
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wishlist-service-config
+  namespace: wishlist-service
+data:
+  application.yml: |
+    server:
+      port: 8080
+      servlet:
+        context-path: /api
+    
+    spring:
+      application:
+        name: wishlist-service
+      data:
+        mongodb:
+          uri: mongodb://mongodb-service:27017/wishlist-prod
+          auto-index-creation: true
+    
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,prometheus
+      endpoint:
+        health:
+          show-details: always
+    
+    springdoc:
+      api-docs:
+        path: /api-docs
+      swagger-ui:
+        path: /swagger-ui.html
+        operationsSorter: method
+
+---
+# Secret para credenciais do MongoDB (exemplo)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-secret
+  namespace: wishlist-service
+type: Opaque
+data:
+  mongodb-root-username: YWRtaW4=  # admin em base64
+  mongodb-root-password: cGFzc3dvcmQ=  # password em base64
+
+---
+# PersistentVolumeClaim para MongoDB
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc
+  namespace: wishlist-service
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard
+
+---
+# Deployment para MongoDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: wishlist-service
+spec:
+  selector:
+    matchLabels:
+      app: mongodb
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:6.0
+          ports:
+            - containerPort: 27017
+              name: mongodb
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-secret
+                  key: mongodb-root-username
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-secret
+                  key: mongodb-root-password
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+      volumes:
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-pvc
+
+---
+# Service para MongoDB
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: wishlist-service
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017
+  clusterIP: None  # Headless service para acesso direto
+
+---
+# Deployment para o serviço Wishlist
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wishlist-service
+  namespace: wishlist-service
+  labels:
+    app: wishlist-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wishlist-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: wishlist-service
+    spec:
+      containers:
+        - name: wishlist-service
+          image: wishlist-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /api/actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/actuator/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/config
+      volumes:
+        - name: config-volume
+          configMap:
+            name: wishlist-service-config
+
+---
+# Service para expor o serviço Wishlist
+apiVersion: v1
+kind: Service
+metadata:
+  name: wishlist-service
+  namespace: wishlist-service
+  labels:
+    app: wishlist-service
+spec:
+  selector:
+    app: wishlist-service
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+# HorizontalPodAutoscaler para escalabilidade automática
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wishlist-service-hpa
+  namespace: wishlist-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wishlist-service
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# Ingress para acesso externo
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wishlist-service-ingress
+  namespace: wishlist-service
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: wishlist.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wishlist-service
+                port:
+                  number: 80
