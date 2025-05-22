@@ -7,7 +7,6 @@ import com.lzb.wishlist.adapter.in.web.dto.WishlistResponse;
 import com.lzb.wishlist.domain.model.ProductTO;
 import com.lzb.wishlist.domain.model.WishlistTO;
 import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
 
 import java.util.Set;
 
@@ -18,8 +17,6 @@ public interface WebMapper {
 
     ProductResponse toProductResponse(ProductTO product);
 
-    @Mapping(target = "customerId", source = "customerId")
-    @Mapping(target = "products", source = "products")
     WishlistResponse toWishlistResponse(WishlistTO wishlist);
 
     Set<ProductResponse> toProductResponseSet(Set<ProductTO> products);
